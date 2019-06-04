@@ -9,12 +9,6 @@
 # ------------------------------------------------------
 FROM node:12.3.1-alpine
 
-# Install lerna
-RUN yarn global add lerna
-
 # Install full icu for internationalization tests
-RUN yarn global add full-icu
+RUN npm install --unsafe-perm -g full-icu
 ENV NODE_ICU_DATA="/usr/local/lib/node_modules/full-icu"
-
-# Expose global packages
-ENV PATH "$(yarn global bin):$PATH"
