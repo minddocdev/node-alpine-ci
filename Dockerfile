@@ -8,6 +8,7 @@
 # authors:  development@minddoc.com
 # ------------------------------------------------------
 FROM node:12.4.0-alpine
+LABEL maintainer="development@minddoc.com"
 
 # Install extra alpine packages
 RUN apk --update add jq rsync && rm -rf /var/cache/apk/*
