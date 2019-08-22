@@ -1,13 +1,13 @@
 # ------------------------------------------------------
 #                       Dockerfile
 # ------------------------------------------------------
-# image:    kubernetes-deploy
+# image:    node-alpine-ci
 # name:     minddocdev/node-alpine-ci
 # repo:     https://github.com/minddocdev/node-alpine-ci
-# Requires: node:12.4.0-alpine
+# Requires: minddocdev/node-alpine
 # authors:  development@minddoc.com
 # ------------------------------------------------------
-FROM node:12.4.0-alpine
+FROM minddocdev/node-alpine:latest
 LABEL maintainer="development@minddoc.com"
 
 # Install extra alpine packages
