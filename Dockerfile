@@ -13,6 +13,6 @@ LABEL maintainer="development@minddoc.com"
 # Install extra alpine packages
 RUN apk --update add jq rsync && rm -rf /var/cache/apk/*
 
-# Install full icu for internationalization tests
-RUN npm install --unsafe-perm -g full-icu
+# Install depedencies for CI
+RUN npm install --unsafe-perm -g full-icu yarn
 ENV NODE_ICU_DATA="/usr/local/lib/node_modules/full-icu"
