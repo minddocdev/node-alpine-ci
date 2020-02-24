@@ -1,0 +1,25 @@
+name: "kibana"
+
+on:
+  push:
+    tags:
+      - "*"
+    paths:
+      - ".dockerignore"
+      - "Dockerfile"
+
+jobs:
+  docker:
+    name: docker build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@master
+      - name: Build and publish docker image to Docker hub
+        uses: minddocdev/docker-publish-action@master
+        with:
+          name: minddocdev/node-alpine-ci
+          username: minddocbot
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          dockerfile: Dockerfile
+          cache: true
