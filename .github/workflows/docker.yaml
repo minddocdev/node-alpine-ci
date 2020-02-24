@@ -1,4 +1,4 @@
-name: "kibana"
+name: "docker"
 
 on:
   push:
