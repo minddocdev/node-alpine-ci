@@ -14,5 +14,5 @@ LABEL maintainer="development@minddoc.com"
 RUN apk --update add jq rsync && rm -rf /var/cache/apk/*
 
 # Install depedencies for CI
-RUN npm install --unsafe-perm -g full-icu yarn@berry
+RUN npm install --force --unsafe-perm -g full-icu yarn
 ENV NODE_ICU_DATA="/usr/local/lib/node_modules/full-icu"
