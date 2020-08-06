@@ -11,7 +11,7 @@ FROM minddocdev/node-alpine:latest
 LABEL maintainer="development@minddoc.com"
 
 # Install extra alpine packages
-RUN apk --update add git jq rsync && rm -rf /var/cache/apk/*
+RUN apk --update --no-cache add git jq python python-dev rsync && rm -rf /var/cache/apk/*
 
 # Install depedencies for CI
 RUN npm install --force --unsafe-perm -g full-icu yarn
