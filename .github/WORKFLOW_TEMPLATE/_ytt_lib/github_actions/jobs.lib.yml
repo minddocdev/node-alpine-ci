@@ -1,0 +1,400 @@
+#@ load("@ytt:data", "data")
+#@ load("@ytt:library", "library")
+
+#@ load("conditions.lib.yml", "condition_master", "condition_not_master", "condition_rc_tag", "condition_not_rc_tag", "condition_tag", "condition_repository_dispatch")
+#@ load("steps.lib.yml", "step_checkout", "step_cache", "step_apt_install", "step_gem_install", "step_bundle_install", "step_bundle_exec", "step_yarn_install", "step_yarn_workspace", "step_artifact_download", "step_artifact_upload", "step_secrets", "step_docker", "step_coverage", "step_sonar", "step_deploy_trigger", "step_undeploy", "step_dispatch", "step_variables_parse", "step_deployment_state", "step_deploy_runner", "step_app_detect", "step_release", "step_release_get_upload_url", "step_release_print_upload_url", "step_release_upload_asset", "step_clean_release_drafts", "step_helm_action", "step_pr", "step_git_commit", "step_git_push", "step_setup_ruby", "step_setup_gcloud", "step_sync_vuepress", "step_sync_codedocs", "step_upload_test_reports", "step_download_test_reports", "step_release_draft_get_upload_url", "step_set_version_env")
+
+#@ machine_ubuntu = "ubuntu-latest"
+#@ machine_self = "self-hosted"
+#@ machine_macos = "macos"
+
+#@ container_node_alpine = "minddocdev/node-alpine-ci:latest"
+
+#@ def job_build_ts(needs = [], dist = True):
+build:
+  if: #@ condition_repository_dispatch("build")
+  name: build
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  runs-on: #@ machine_ubuntu
+  container: #@ container_node_alpine
+  steps:
+  - #@ step_checkout()
+  - #@ step_yarn_install()
+  - #@ step_yarn_workspace("build")
+  - #@ step_yarn_workspace("lint")
+  - #@ step_yarn_workspace("docs")
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_sync_codedocs()
+  #@ if dist:
+  - #@ step_artifact_upload("dist")
+  #@ end
+#@ end
+
+#@ def job_test_unit(needs = []):
+test_unit:
+  if: #@ condition_repository_dispatch("test_unit")
+  name: test unit
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  runs-on: #@ machine_ubuntu
+  container: #@ container_node_alpine
+  steps:
+  - #@ step_checkout()
+  - #@ step_yarn_install()
+  - #@ step_yarn_workspace("test:unit")
+  - #@ step_artifact_upload("unit-test-reports")
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_upload_test_reports("unit-test-reports")
+#@ end
+
+#@ def job_test_integration(needs = [], services = None, env = None):
+test_integration:
+  if: #@ condition_repository_dispatch("test_integration")
+  name: test integration
+  runs-on: #@ machine_ubuntu
+  container: #@ container_node_alpine
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  timeout-minutes: 15
+  #@ if services:
+  services: #@ services
+  #@ end
+  #@ if services:
+  env: #@ env
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_yarn_install()
+  - #@ step_secrets("app_env")
+  - #@ step_yarn_workspace("test:integration:ci")
+  - #@ step_artifact_upload("integration-test-reports")
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_upload_test_reports("integration-test-reports")
+#@ end
+
+#@ def job_docker(needs = [], software_group = "web", download_dist = True, app_specific_dockerfile = False, sign_certs = False):
+docker:
+  #@ if software_group == "web":
+  if: #@ "({} || {}) && {}".format(condition_master, condition_tag, condition_repository_dispatch("docker"))
+  #@ else:
+  if: #@ condition_repository_dispatch("docker")
+  #@ end
+  name: docker build and publish
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_secrets("docker", sign_certs)
+  #@ if download_dist:
+  - #@ step_artifact_download("dist")
+  #@ end
+  - #@ step_docker(software_group, app_specific_dockerfile)
+#@ end
+
+#@ def job_sonar(needs = [], software_group = "web"):
+sonar:
+  if: #@ "{} && {}".format(condition_master, condition_repository_dispatch("sonar"))
+  name: sonarqube scanner
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_secrets("sonar")
+  #@ if software_group == "web":
+  - #@ step_artifact_download("unit-test-reports")
+  #@ if "test_integration" in needs:
+  - #@ step_artifact_download("integration-test-reports")
+  #@ end
+  - #@ step_coverage()
+  #@ end
+  - #@ step_sonar()
+#@ end
+
+#@ def job_deploy_staging(needs = []):
+deploy_staging:
+  if: #@ "{} && {}".format(condition_master, condition_repository_dispatch("deploy_staging"))
+  name: deploy staging
+  runs-on: #@ machine_ubuntu
+  needs: #@ needs
+  steps:
+  - #@ step_secrets("deploy")
+  - #@ step_deploy_trigger("staging")
+#@ end
+
+#@ def job_deploy_qa(needs = []):
+deploy_qa:
+  if: #@ condition_rc_tag
+  name: deploy qa
+  runs-on: #@ machine_ubuntu
+  needs: #@ needs
+  steps:
+  - #@ step_secrets("deploy")
+  - #@ step_deploy_trigger("qa")
+#@ end
+
+#@ def job_deploy_production(needs = [], condition = condition_not_rc_tag):
+deploy_production:
+  if: #@ condition
+  name: deploy production
+  runs-on: #@ machine_ubuntu
+  needs: #@ needs
+  steps:
+  - #@ step_secrets("deploy")
+  - #@ step_deploy_trigger("production")
+#@ end
+
+#@ def job_dispatch_release(needs = [], event_type = "code"):
+dispatch_release:
+  #@ if event_type == "deployment":
+  if: github.event.deployment.environment == 'staging'
+  #@ else:
+  if: #@ "{} && {}".format(condition_master, condition_repository_dispatch("dispatch_release"))
+  #@ end
+  name: dispatch release
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  #@ if event_type == "deployment":
+  - #@ step_variables_parse("${{ github.event.deployment.payload }}", "app")
+  #@ end
+  - #@ step_dispatch("release", '{ "app": "${{ env.APP }}" }')
+#@ end
+
+#@ def job_deploy_app(needs = [], repo_type = "web"):
+deploy_app:
+  name: deploy ${{ github.event.deployment.environment }}
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_variables_parse("${{ github.event.deployment.payload }}", "app,cluster")
+  - #@ step_secrets("deployer_{}".format(repo_type))
+  - #@ step_deployment_state("pending")
+  - #@ step_deploy_runner()
+  - #@ step_deployment_state("success")
+  - #@ step_deployment_state("failure")
+#@ end
+
+#@ def job_undeploy_app(needs = []):
+undeploy_app:
+  if: |-
+    github.event.deployment.transient_environment == true &&
+    github.event.deployment_status.state == 'inactive'
+  name: undeploy ${{ github.event.client_payload.app }} test
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_secrets("deploy")
+  - #@ step_undeploy("test")
+#@ end
+
+#@ def job_release_app(needs = [], event_type = "deployment", task_prefix = None, prerelease = False, monorepo = False):
+release_app:
+  #@ if event_type == "dispatch":
+  if: github.event_name == 'repository_dispatch'
+  name: release ${{ github.event.client_payload.app }}
+  env:
+    APP: ${{ github.event.client_payload.app }}
+  #@ elif event_type == "deployment":
+  if: github.event.deployment.environment == 'staging'
+  name: release
+  #@ else:
+  name: release
+  #@ end
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_clean_release_drafts(monorepo)
+  - #@ step_app_detect()
+  - #@ step_release(task_prefix, prerelease, monorepo)
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_download_test_reports()
+  - #@ step_release_draft_get_upload_url()
+  - #@ step_release_upload_asset("test-reports")
+#@ end
+
+#@ def job_lint_shell(needs = []):
+lint:
+  if: #@ condition_repository_dispatch("lint")
+  name: lint
+  runs-on: #@ machine_ubuntu
+  container: koalaman/shellcheck-alpine:v0.7.0
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - name: Check shell scripts
+    run: '
+      find . -type f \( -name "*.sh" \) -print |
+      while IFS="" read -r file;
+      do shellcheck "$file"; done;
+    '
+#@ end
+
+#@ def job_lint_markdown(needs = []):
+lint:
+  if: #@ condition_repository_dispatch("lint")
+  name: lint
+  runs-on: #@ machine_ubuntu
+  container: tmknom/markdownlint:latest
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - name: Lint markdown files
+    run: '
+      find . -type f \( -name "*.md" \) -not \( -path "./packages/frontend/lib-components/src/*" \) -not \( -path "**/node_modules/*" \) -not \( -path "**/fastlane/*" \) -print |
+      while IFS="" read -r file;
+      do /usr/bin/markdownlint -c markdownlint.yaml "$file"; done;
+    '
+#@ end
+
+#@ def job_lint_yaml(needs = []):
+lint:
+  if: #@ condition_repository_dispatch("lint")
+  name: lint
+  runs-on: #@ machine_ubuntu
+  container: cytopia/yamllint:1.20
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - name: Lint yaml files
+    run: yamllint -d yamllint.yaml .
+#@ end
+
+#@ def job_helm_check(needs = []):
+check:
+  if: #@ condition_not_master
+  name: check
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_helm_action(False)
+#@ end
+
+#@ def job_helm_publish(needs = []):
+publish:
+  if: #@ condition_master
+  name: check
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_helm_action(True)
+#@ end
+
+#@ def job_pr_check(needs = [], label_config = ''):
+check:
+  name: check
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_pr(label_config)
+#@ end
+
+#@ def job_lint_ruby(needs = [], debian_packages = []):
+lint:
+  if: #@ condition_repository_dispatch("lint")
+  name: lint
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_setup_ruby()
+  - #@ step_cache("ruby")
+  - #@ step_apt_install(debian_packages)
+  - #@ step_gem_install("bundler")
+  - #@ step_bundle_install(4, True, "vendor/bundle")
+  - #@ step_bundle_exec("rubocop -p")
+#@ end
+
+#@ def job_test_ruby(needs = [], debian_packages = []):
+test:
+  if: #@ condition_repository_dispatch("lint")
+  name: test
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_setup_ruby()
+  - #@ step_cache("ruby")
+  - #@ step_apt_install(debian_packages)
+  - #@ step_gem_install("bundler")
+  - #@ step_bundle_install(4, True, "vendor/bundle")
+  - #@ step_bundle_exec("rake test")
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_upload_test_reports("test-reports")
+  - #@ step_artifact_upload("coverage", "test", "")
+  - #@ step_bundle_exec("danger", { "DANGER_GITHUB_API_TOKEN": "${{ github.token }}" }, True)
+#@ end
+
+#@ def job_upload_docs(needs = []):
+docs:
+  if: #@ "{} && {}".format(condition_master, condition_repository_dispatch("docs"))
+  name: docs
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  - #@ step_secrets("documentation")
+  - #@ step_setup_gcloud("${{ env.DOCUMENTATION_SERVICE_KEY }}")
+  - #@ step_sync_vuepress()
+#@ end
+
+#@ def job_docker_build_and_publish(needs = [], public = True):
+docker:
+  name: docker build and publish
+  runs-on: #@ machine_ubuntu
+  #@ if needs:
+  needs: #@ needs
+  #@ end
+  steps:
+  - #@ step_checkout()
+  #@ if public:
+  - #@ step_secrets("docker_public")
+  #@ else:
+  - #@ step_secrets("docker")
+  #@ end
+  - #@ step_set_version_env()
+  - #@ step_set_version_env("workflow_dispatch", "${{github.event.inputs.version}}")
+  - #@ step_docker("public")
+#@ end

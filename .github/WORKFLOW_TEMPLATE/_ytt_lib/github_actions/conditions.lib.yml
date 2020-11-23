@@ -1,0 +1,11 @@
+#@ condition_master = "github.ref == 'refs/heads/master'"
+#@ condition_not_master = "github.ref != 'refs/heads/master'"
+#@ condition_tag = "startsWith(github.ref, 'refs/tags/')"
+#@ condition_rc_tag = "{} && contains(github.ref, '-rc')".format(condition_tag)
+#@ condition_not_rc_tag = "{} && !contains(github.ref, '-rc')".format(condition_tag)
+
+#@ def condition_repository_dispatch(job_name):
+#@   dispatch_type_condition = "github.event.client_payload.scope == 'job'"
+#@   job_condition = "!contains(github.event.client_payload.jobs, '{}')".format(job_name)
+#@   return "!({} && {})".format(dispatch_type_condition, job_condition)
+#@ end

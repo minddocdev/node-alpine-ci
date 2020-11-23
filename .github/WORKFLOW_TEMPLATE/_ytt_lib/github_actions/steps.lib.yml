@@ -1,0 +1,759 @@
+#@ load("@ytt:data", "data")
+
+#@ load("conditions.lib.yml", "condition_master")
+
+#@ def step_checkout(ref = None, submodules = False):
+name: Checkout git repository
+uses: actions/checkout@v2.3.2
+#@ if ref or submodules:
+with:
+  #@ if ref:
+  ref: #@ ref
+  #@ end
+  #@ if submodules:
+  submodules: true
+  #@ end
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+#@ end
+
+#@ def step_cache(cache_type = "yarn"):
+name: Retrieve cache
+uses: actions/cache@v2.1.1
+with:
+  #@ if cache_type == "yarn":
+  path: .yarn-cache
+  key: ${{ runner.os }}-${{ env.APP }}-yarn_cache-${{ hashFiles('**/yarn.lock') }}
+  restore-keys: ${{ runner.os }}-${{ env.APP }}-yarn_cache-
+  #@ end
+  #@ if cache_type == "ruby":
+  path: vendor/bundle
+  key: ${{ runner.os }}-gem-${{ hashFiles('**/Gemfile.lock') }}
+  restore-keys: ${{ runner.os }}-gem-
+  #@ end
+  #@ if cache_type == "android":
+  path: ~/.gradle/caches
+  key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+  restore-keys: ${{ runner.os }}-gradle-
+  #@ end
+  #@ if cache_type == "ios":
+  path: Carthage
+  key: ${{ runner.os }}-carthage-${{ hashFiles('**/Cartfile.resolved') }}
+  restore-keys: ${{ runner.os }}-carthage-
+  #@ end
+#@ end
+
+#@ def step_apt_install(packages):
+name: #@ "Install apt packages {}".format(", ".join(packages)).lstrip()
+run: #@ "sudo apt-get install -y {}".format(" ".join(packages))
+#@ end
+
+#@ def step_gem_install(package):
+name: #@ "Install gem {}".format(package).lstrip()
+run: #@ "gem install {}".format(package).lstrip()
+#@ end
+
+#@ def step_bundle_install(jobs = None, frozen = False, path = None):
+#@ arguments = ""
+#@ if jobs:
+#@   arguments = "-j{}".format(jobs)
+#@ end
+#@ if frozen:
+#@   arguments = "{} --frozen".format(arguments)
+#@ end
+#@ if path:
+#@   arguments = "{} --path={}".format(arguments, path)
+#@ end
+name: "Install ruby bundle"
+run: #@ "bundle install {}".format(arguments).lstrip()
+#@ end
+
+#@ def step_fastlane_command(command, args = None):
+name: #@ "Run fastlane {}".format(command)
+#@ if command == "vendors":
+if: steps.cache.outputs.cache-hit != 'true'
+#@ elif command == "doc":
+if: github.event.deployment.environment == 'production'
+#@ elif command == "play_store_deploy":
+if: github.event.deployment.environment == 'qa'
+#@ elif command == "play_store_deploy_internal":
+if: github.event.deployment.environment != 'production'
+#@ end
+#@ if args:
+run: #@ "bundle exec fastlane {} {}".format(command, args)
+#@ else:
+run: #@ "bundle exec fastlane {}".format(command)
+#@ end
+#@ if command == "vendors":
+env:
+  GITHUB_ACCESS_TOKEN: ${{ github.token }}
+#@ elif command == "danger_bot":
+env:
+  DANGER_TOKEN: ${{ github.token }}
+#@ elif command == "firebase_beta":
+env:
+  FIREBASE_DEBUG_APP_ID: ${{ secrets.FIREBASE_DEBUG_APP_ID }}
+  FIREBASE_DISTRIBUTION_TOKEN: ${{ secrets.FIREBASE_DISTRIBUTION_TOKEN }}
+#@ elif command == "play_store_deploy":
+env:
+  SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+#@ end
+#@ end
+
+#@ def step_bundle_exec(command, env = {}, continue_on_error = False):
+name: #@ "Execute bundle '{}' command".format(command)
+run: #@ "bundle exec {}".format(command)
+#@ if continue_on_error:
+continue-on-error: true
+#@ end
+#@ if env:
+env: #@ env
+#@ end
+#@ end
+
+#@ def step_yarn_install():
+name: Install global yarn dependencies
+run: yarn install
+#@ end
+
+#@ def step_yarn_workspace(command):
+name: #@ "Workspace {}".format(command)
+run: #@ "yarn workspace $APP {}".format(command)
+#@ end
+
+#@ def step_artifact_download(name, prefix = "${{ env.APP }}-", path = "${{ env.APP_PATH }}/"):
+#@ artifact_id = "{}{}".format(prefix, name)
+name: #@ "Download {} to {}".format(artifact_id, path)
+uses: actions/download-artifact@v1.0.0
+with:
+  name: #@ artifact_id
+  #@ if name.endswith("test-reports"):
+  path: #@ "{}.{}".format(path, name)
+  #@ else:
+  path: #@ "{}{}".format(path, name)
+  #@ end
+#@ end
+
+#@ def step_artifact_upload(name, prefix = "${{ env.APP }}-", path = "${{ env.APP_PATH }}/"):
+#@ artifact_id = "{}{}".format(prefix, name)
+#@ if name.endswith("test-reports"):
+#@ artifact_path = ".reports/"
+#@ else:
+#@ artifact_path = "{}{}".format(path, name)
+#@ end
+#@ if name == ".docs":
+if: github.event.deployment.environment == 'production'
+#@ end
+name: #@ "Upload {} to {}".format(artifact_id, artifact_path)
+uses: actions/upload-artifact@v1.0.0
+with:
+  name: #@ artifact_id
+  path: #@ artifact_path
+#@ end
+
+#@ def step_secrets(name, sign_certs = False):
+#@ deployer_secrets = "\n".join([
+#@   "- path: platform/kubernetes/${{ env.CLUSTER }}",
+#@   "  key: kubeconfig.yaml",
+#@   "  env: KUBECONFIG_CONTENT",
+#@   "- path: platform/global",
+#@   "  key: helmRepoName",
+#@   "  env: HELM_REPO_NAME",
+#@   "  unmask: true",
+#@   "- path: platform/global",
+#@   "  key: helmRepoUrl",
+#@   "  env: HELM_REPO_URL",
+#@   "  unmask: true",
+#@   "- path: platform/global",
+#@   "  key: helmRepoUsername",
+#@   "  env: HELM_REPO_USERNAME",
+#@   "  unmask: true",
+#@   "- path: platform/sentry",
+#@   "  key: authToken",
+#@   "  env: SENTRY_AUTH_TOKEN",
+#@   "- path: platform/sentry",
+#@   "  key: org",
+#@   "  env: SENTRY_ORG",
+#@   "  unmask: true",
+#@   "- path: platform/slack",
+#@   "  key: mouToken",
+#@   "  env: SLACK_TOKEN",
+#@   "- path: platform/slack",
+#@   "  key: mouChannel",
+#@   "  env: SLACK_CHANNEL",
+#@   "  unmask: true",
+#@ ])
+#@ docker_secrets = "\n".join([
+#@   "- path: platform/docker",
+#@   "  key: registry",
+#@   "  env: DOCKER_REGISTRY",
+#@   "  unmask: true",
+#@   "- path: platform/docker",
+#@   "  key: password",
+#@   "  env: DOCKER_PASSWORD",
+#@   "- path: platform/global",
+#@   "  key: gcpProject",
+#@   "  env: GCP_PROJECT",
+#@   "  unmask: true",
+#@ ])
+#@ cert_signing_secrets = "\n".join([
+#@   "- path: web/certs/development",
+#@   "  key: private.pem",
+#@   "  file: secrets/certs/development/private.pem",
+#@   "- path: web/certs/staging",
+#@   "  key: private.pem",
+#@   "  file: secrets/certs/staging/private.pem",
+#@   "- path: web/certs/production",
+#@   "  key: private.pem",
+#@   "  file: secrets/certs/production/private.pem",
+#@ ])
+name: #@ "Import {} variables from vault".format(name)
+uses: minddocdev/vault-action@master
+#@ if name == "documentation":
+if: #@ condition_master
+#@ end
+with:
+  url: ${{ secrets.VAULT_ENDPOINT }}
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+  #@ if name == "docker" and sign_certs:
+  #@yaml/text-templated-strings
+  secrets: |
+    (@= docker_secrets @)
+    (@= cert_signing_secrets @)
+  #@ elif name == "docker":
+  #@yaml/text-templated-strings
+  secrets: |
+    (@= docker_secrets @)
+  #@ elif name == "docker_public":
+  secrets: |
+    - path: platform/docker
+      key: dockerhubUser
+      env: DOCKER_USER
+    - path: platform/docker
+      key: dockerhubAccessToken
+      env: DOCKER_PASSWORD
+  #@ elif name == "certs":
+  #@yaml/text-templated-strings
+  secrets: |
+    (@= cert_signing_secrets @)
+  #@ elif name == "sonar":
+  secrets: |
+    - path: platform/sonar
+      key: login
+      env: SONAR_LOGIN
+    - path: platform/sonar
+      key: url
+      env: SONAR_URL
+      unmask: true
+  #@ elif name == "deploy":
+  secrets: |
+    - path: platform/global
+      key: deployCluster
+      env: DEPLOY_CLUSTER
+      unmask: true
+    - path: platform/global
+      key: deployDomain
+      env: DEPLOY_DOMAIN
+      unmask: true
+    - path: platform/global
+      key: mouHost
+      env: MOU_HOST
+      unmask: true
+  #@ elif name == "app_env":
+  secrets: |
+    - path: web/serviceaccounts
+      key: googleapis.json
+      file: secrets/serviceaccounts/googleapis.json
+    - path: web/env
+      key: ${{ env.APP }}
+      file: ${{ env.APP_PATH }}/.env
+  #@ elif name == "deployer_web":
+  #@yaml/text-templated-strings
+  secrets: |
+    - path: web/helm
+      key: ${{ env.APP }}.yaml
+      file: secrets/helm/${{ env.APP }}.yaml
+    - path: web/helm/${{ github.event.deployment.environment }}
+      key: ${{ env.APP }}.yaml
+      file: secrets/helm/${{ github.event.deployment.environment }}/${{ env.APP }}.yaml
+    - path: platform/helm
+      key: ${{ env.APP }}
+      file: secrets/helm/${{ env.APP }}
+    (@= deployer_secrets @)
+  #@ elif name == "deployer_platform":
+  #@yaml/text-templated-strings
+  secrets: |
+    - path: platform/helm
+      key: ${{ env.APP }}.yaml
+      file: secrets/helm/${{ env.APP }}.yaml
+    (@= deployer_secrets @)
+  #@ elif name == "deployer_mobile":
+  #@yaml/text-templated-strings
+  secrets: |
+    - path: mobile/rails/helm
+      key: secrets.yaml
+      file: helm-values/secrets.yaml
+    - path: mobile/rails/helm
+      key: secrets-${{ github.event.deployment.environment }}.yaml
+      file: helm-values/secrets-${{ github.event.deployment.environment }}.yaml
+    (@= deployer_secrets @)
+  #@ elif name == "ios":
+  secrets: |
+    - path: mobile/ios
+      key: gc_keys.json
+      file: gc_keys.json
+    - path: mobile/ios
+      key: GoogleService-Info-Production.plist
+      file: Configuration/Firebase/Production/GoogleService-Info.plist
+    - path: mobile/ios
+      key: GoogleService-Info-Staging.plist
+      file: Configuration/Firebase/Staging/GoogleService-Info.plist
+    - path: mobile/ios
+      key: fastlanePassword
+      env: FASTLANE_PASSWORD
+  #@ elif name == "android":
+  secrets: |
+    - path: mobile/android
+      key: google-services.json
+      file: app/google-services.json
+    - path: mobile/android
+      key: google-play.json
+      file: app/google-play.json
+    - path: mobile/android
+      key: moodpath.jks.base64
+      file: app/moodpath.jks.base64
+    - path: mobile/android
+      key: firebase-test-secret.json
+      env: GCLOUD_SERVICE_KEY
+  #@ elif name == "documentation":
+  secrets: |
+    - path: platform/documentation
+      key: serviceAccount.json
+      env: DOCUMENTATION_SERVICE_KEY
+    - path: platform/global
+      key: gcpProject
+      env: GCP_PROJECT
+      unmask: true
+  #@ else:
+  secrets: ''
+  #@ end
+#@ end
+
+#@ def step_docker(software_group = "web", app_specific_dockerfile = False):
+name: Build and publish docker image
+uses: minddocdev/mou-docker-action@master
+#@ if software_group != "public":
+env:
+  VERSION: ${{ github.sha }}
+#@ end
+with:
+  #@ if software_group == "public":
+  name: ${{ env.DOCKER_HUB_PROJECT }}/${{ env.APP }}
+  username: ${{ env.DOCKER_USER }}
+  tags: latest
+  buildargs: APP,VERSION
+  #@ else:
+  name: ${{ env.DOCKER_REGISTRY }}/${{ env.GCP_PROJECT }}/${{ env.APP }}
+  username: _json_key
+  registry: ${{ env.DOCKER_REGISTRY }}
+  #@ end
+  password: ${{ env.DOCKER_PASSWORD }}
+  #@ if software_group == "web":
+  #@ if app_specific_dockerfile:
+  dockerfile: ${{ env.APP_PATH }}/Dockerfile
+  #@ else:
+  dockerfile: ${{ env.APP_END_PATH }}/Dockerfile
+  #@ end
+  buildargs: APP,NPM_GITHUB_TOKEN,NPM_FORTAWESOME_TOKEN,VERSION
+  #@ end
+  cache: true
+#@ end
+
+#@ def step_coverage():
+name: Replace all lcov SF occurrences with the valid path
+run: .github/scripts/coverage_report.sh
+#@ end
+
+#@ def step_sonar():
+name: Scan code with sonarqube
+uses: minddocdev/sonarqube-action@master
+with:
+  app: ${{ env.APP }}
+  baseDir: ${{ env.APP_PATH }}
+  login: ${{ env.SONAR_LOGIN }}
+  url: ${{ env.SONAR_URL }}
+#@ end
+
+#@ def step_deploy_trigger(environment):
+name: #@ "Deploy {}".format(environment)
+uses: minddocdev/mou-client-action@master
+env:
+  ENVIRONMENT: #@ environment
+with:
+  command: deploy
+  args: |
+    app: ${{ env.APP }}
+    environment: ${{ env.ENVIRONMENT }}
+  host: ${{ env.MOU_HOST }}
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_undeploy(environment):
+name: #@ "Undeploy {}".format(environment)
+uses: minddocdev/mou-client-action@master
+env:
+  ENVIRONMENT: #@ environment
+with:
+  command: undeploy
+  args: |
+    app: ${{ env.APP }}
+    branch: ${{ github.head_ref }}
+    environment: ${{ env.ENVIRONMENT }}
+  host: ${{ env.MOU_HOST }}
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_dispatch(event_type, payload):
+name: #@ "Dispatch {}".format(event_type)
+uses: peter-evans/repository-dispatch@0ae1c4b014bff102f1063cd67a53fc4a91311d1b
+with:
+  event-type: #@ event_type
+  client-payload: #@ payload
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_variables_parse(variables, white_list):
+name: #@ "Parse {} variables".format(white_list)
+uses: minddocdev/env-variables-action@master
+with:
+  variables: #@ variables
+  whiteList: #@ white_list
+#@ end
+
+#@ def step_deployment_state(state):
+name: #@ "Set ${{ env.APP }} ${{ github.event.deployment.environment }} deployment as " + state
+#@ if state in ["success", "failure"]:
+if: #@ "{}()".format(state)
+#@ end
+uses: deliverybot/deployment-status@70e18b94326d2119355ad60dbc3c0a8329241b90
+with:
+  state: #@ state
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_deploy_runner():
+name: Deploy ${{ env.APP }} built image to ${{ github.event.deployment.environment }}
+uses: minddocdev/mou-deploy-action@master
+with:
+  config: "${{ github.event.deployment.payload }}"
+  environment: "${{ github.event.deployment.environment }}"
+  helm: |
+    name: "${{ env.HELM_REPO_NAME }}"
+    url: "${{ env.HELM_REPO_URL }}"
+    username: "${{ env.HELM_REPO_USERNAME }}"
+    password: "${{ secrets.MINDDOCBOT_TOKEN }}"
+  kubernetes: "${{ env.KUBECONFIG_CONTENT }}"
+  sentry: |
+    authToken: "${{ env.SENTRY_AUTH_TOKEN }}"
+    org: "${{ env.SENTRY_ORG }}"
+  slack: |
+    channel: "${{ env.SLACK_CHANNEL }}"
+    token: "${{ env.SLACK_TOKEN }}"
+  token: "${{ github.token }}"
+#@ end
+
+#@ def step_release(task_prefix = None, prerelease = False, monorepo = False):
+if: steps.detect_app_type.outputs.app_type != 'helper'
+name: Create Release
+uses: minddocdev/mou-release-action@master
+with:
+  #@ if monorepo:
+  app: ${{ env.APP }}
+  #@ end
+  draft: ${{ steps.detect_app_type.outputs.app_type != 'lib' }}
+  #@ if prerelease:
+  prerelease: true
+  #@ else:
+  prerelease: ${{ steps.detect_app_type.outputs.app_type == 'ui' }}
+  #@ end
+  taskBaseUrl: https://minddoc.atlassian.net/browse
+  #@ if task_prefix:
+  taskPrefix: #@ task_prefix
+  #@ end
+  templatePath: RELEASE_DRAFT/${{ steps.detect_app_type.outputs.app_type }}.md
+  token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_release_get_upload_url():
+name: Retrieve release upload url
+continue-on-error: true
+run: echo "GITHUB_RELEASE_URL=$(hub release show ${GITHUB_REF#refs/*/} -f %uA)" >> $GITHUB_ENV
+env:
+  GITHUB_USER: minddocbot
+  GITHUB_TOKEN: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_release_draft_get_upload_url():
+name: Retrieve draft release upload url
+continue-on-error: true
+run: echo "GITHUB_RELEASE_URL=$(hub release -f "%uA[%S]%n" --include-drafts | grep draft | cut -d'[' -f1)" >> $GITHUB_ENV
+env:
+  GITHUB_USER: minddocbot
+  GITHUB_TOKEN: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_release_print_upload_url():
+name: Check release upload url
+run: echo $GITHUB_RELEASE_URL
+#@ end
+
+#@ def step_package_test_results():
+name: Package test-results for Github release
+run: zip -r -j test-reports.zip .test-reports
+#@ end
+
+#@ def step_release_upload_asset(name, prefix = "${{ env.APP }}-", path = "${{ env.APP_PATH }}/"):
+#@ asset_name = "{}{}.zip".format(prefix, name)
+name: Upload Release Asset
+continue-on-error: true
+uses: actions/upload-release-asset@e8f9f06c4b078e705bd2ea027f0926603fc9b4d5
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+with:
+  upload_url: ${{ env.GITHUB_RELEASE_URL }}
+  #@ if name.endswith("test-reports"):
+  asset_path: #@ "{}.zip".format(name)
+  #@ else:
+  asset_path: #@ "{}{}".format(path, name)
+  #@ end
+  asset_name: #@ asset_name
+  asset_content_type: application/zip
+#@ end
+
+#@ def step_app_detect():
+name: Detect app type
+id: detect_app_type
+run: |-
+  app="${{ env.APP }}";
+  case $app in
+    "moodpath-android")
+      echo ::set-output name=app_type::ui
+      ;;
+    "moodpath-ios")
+      echo ::set-output name=app_type::ui
+      ;;
+    "moodpath-rails")
+      echo ::set-output name=app_type::api
+      ;;
+    *)
+      echo ::set-output name=app_type::${app%%-*}
+      ;;
+  esac
+#@ end
+
+#@ def step_clean_release_drafts(monorepo):
+name: Clean old release drafts
+#@ if monorepo:
+run: >-
+  hub release -f "%T (%S) %n" --include-drafts |
+  grep " (draft)" |
+  grep "${{ env.APP }}@" |
+  awk '{print $1}' |
+  xargs --no-run-if-empty -t -n1 hub release delete
+#@ else:
+run: >-
+  hub release -f "%T (%S) %n" --include-drafts |
+  grep " (draft)" |
+  awk '{print $1}' |
+  xargs --no-run-if-empty -t -n1 hub release delete
+#@ end
+env:
+  GITHUB_USER: minddocbot
+  GITHUB_TOKEN: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_helm_action(publish = False):
+#@ if publish:
+name: Publish chart
+#@ else:
+name: Check chart
+#@ end
+uses: minddocdev/helm-action@master
+with:
+  chartName: ${{ env.CHART }}
+  #@ if publish:
+  githubToken: ${{ secrets.MINDDOCBOT_TOKEN }}
+  publish: "true"
+  rebase: "true"
+  #@ end
+#@ end
+
+#@ def step_pr(label_config = ''):
+name: Check commit/PR style and PR labels
+uses: minddocdev/mou-pr-action@master
+with:
+  commitTitleLength: 72
+  conventionalCommits: true
+  #@yaml/text-templated-strings
+  labels: |-
+    "build":
+    - "**/Makefile"
+    - "**/*.gradle"
+    - "**/tsconfig.json"
+    - "**/tsconfig.*.json"
+    - "**/vue.config.js"
+    - "**/*.xcodeproj"
+    - "**/*.xcworkspace"
+    - "Rakefile"
+    - "**/fastlane/**"
+    "ci":
+    - ".github/**"
+    - "Dangerfile"
+    "deploy":
+    - "**/mou.yaml"
+    - "helm-values/**"
+    - "helm/values/**"
+    "deps":
+    - ".npmrc"
+    - ".yarnrc"
+    - "**/package.json"
+    - "Gemfile"
+    - "Cartfile"
+    "docker":
+    - "**/Dockerfile"
+    - "**/docker-compose.yaml"
+    - "**/docker-build.sh"
+    - "**/.dockerignore"
+    - "**/package.docker.json"
+    "docs":
+    - "**/*.md"
+    - "**/typedoc.js"
+    - "**/.jazzy.yaml"
+    "proto": "**/*.proto"
+    "scripts": "**/*.sh"
+    "style":
+    - "markdownlint.yaml"
+    - "yamllint.yaml"
+    - ".rubocop*"
+    - ".swiftlint.yml"
+    - "**/.babelrc"
+    - "**/.babel.config.js"
+    - "**/.editorconfig"
+    - "**/.eslintrc.js"
+    - "**/.modernizrrc"
+    - "**/.prettierrc"
+    - "**/postcss.config.js"
+    "test":
+    - "**/*.spec.js"
+    - "**/sonar-project.properties"
+    - "**/jest.config.js"
+    - "**/jest.*.config.js"
+    - "**/*_test.rb"
+    - "MoodpathTests/**"
+    - "MoodpathUITests/**"
+    "types":
+    - "**/types/**"
+    - "**/tsconfig.*.json"
+    (@= label_config @)
+  prTitleRegex: '^(\w*)(\(([\w\$\.\*/-]*)\))?!?\: (.*)$'
+  prTitleLength: 72
+  token: ${{ github.token }}
+#@ end
+
+#@ def step_git_commit(commit_message, path_spec = "."):
+name: Commit current changes
+#@yaml/text-templated-strings
+run: |
+  git config --local user.email "android18@minddoc.de"
+  git config --local user.name "Android 18"
+  git config --local github.user "minddocbot"
+  git config --local github.email "android18@minddoc.de"
+  git add -v (@= path_spec @)
+  git commit -m "(@= commit_message @)"
+#@ end
+
+#@ def step_git_push():
+name: Push release commit
+uses: ad-m/github-push-action@68af9897f2b021035ca3952bf354bbb4675c1762
+with:
+  github_token: ${{ secrets.MINDDOCBOT_TOKEN }}
+#@ end
+
+#@ def step_setup_ruby():
+uses: actions/setup-ruby@v1
+with:
+  ruby-version: ${{ env.RUBY_VERSION }}
+#@ end
+
+#@ def step_setup_gcloud(credentials = None):
+if: #@ condition_master
+name: Setup Google Cloud
+uses: google-github-actions/setup-gcloud@v0.2.0
+#@ if credentials:
+with:
+  service_account_key: #@ credentials
+#@ end
+#@ end
+
+#@ def step_sync_vuepress():
+#@ bucket = "gs://documentation.buckets.minddoc.com"
+if: #@ condition_master
+name: Synchronize repository vuepress documentation from markdown files
+#@yaml/text-templated-strings
+run: |-
+  export REPO=$(echo ${{ github.repository }} | cut -d'/' -f2)
+  find . -type d \( -name node_modules -o -name .github -o -name .reports -o -name [aA]ssets -o -name public -o -name dist -o -name test -o -name input -o -name __Snapshots__ -o -name Carthage -o -name reports -o -name img -o -name build -o -name res \) -prune -false -o \( -iname \*.md -o -iname \*.jpg -o -iname \*.jpeg -o -iname \*.png -o -iname \*.gif -o -iname \*.svg -o -iname \*.puml \) | xargs zip -r $REPO.zip
+  gsutil cp $REPO.zip (@= bucket @)/vuepress/$REPO.zip
+  gsutil cp docs.yaml (@= bucket @)/config/$REPO.yaml
+#@ end
+
+#@ def step_sync_codedocs(folder = "docs"):
+#@ bucket = "gs://documentation.buckets.minddoc.com"
+if: #@ condition_master
+name: Synchronize app code documentation
+#@yaml/text-templated-strings
+run: |-
+  cd (@= folder @); zip -r ../$APP.zip *; cd ..
+  gsutil cp $APP.zip (@= bucket @)/codedocs/$APP.zip
+#@ end
+
+#@ def step_setup_node():
+name: Setup Node
+uses: actions/setup-node@v1
+#@ end
+
+#@ def step_firebase_tools():
+name: Setup Firebase Tools
+run: npm install -g firebase-tools
+#@ end
+
+#@ def step_upload_test_reports(name, path = ".reports"):
+#@ bucket = "gs://documentation.buckets.minddoc.com"
+if: #@ condition_master
+name: Upload test reports to google bucket
+continue-on-error: true
+#@yaml/text-templated-strings
+run: |-
+  gsutil cp -r (@= path @) (@= bucket @)/test-reports/${{ env.APP }}/${{ github.sha }}/(@= name @)
+#@ end
+
+#@ def step_download_test_reports():
+#@ bucket = "gs://documentation.buckets.minddoc.com"
+name: Download test reports from google bucket
+continue-on-error: true
+#@yaml/text-templated-strings
+run: |-
+  mkdir .gcs-test-reports
+  gsutil cp -r (@= bucket @)/test-reports/${{ env.APP }}/${{ github.sha }}/ .gcs-test-reports
+  zip -r -j test-reports.zip .gcs-test-reports
+#@ end
+
+#@ def step_set_version_env(source = "tag", input = "${GITHUB_REF#refs/tags/}"):
+#@ if source == "tag":
+if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+#@ else:
+if: #@ "github.event_name == '{}'".format(source)
+#@ end
+name: #@ "Set VERSION from {}".format(source)
+run: #@ 'echo "VERSION={}" >> $GITHUB_ENV'.format(input)
+#@ end
