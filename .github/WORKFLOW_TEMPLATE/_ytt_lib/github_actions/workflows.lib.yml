@@ -1,0 +1,256 @@
+#@ load("@ytt:template", "template")
+
+#@ load("conditions.lib.yml", "condition_master")
+#@ load("envs.lib.yml", "env_code", "env_code_monorepo", "env_deploy", "env_chart")
+#@ load("jobs.lib.yml", "job_build_ts", "job_test_unit", "job_test_integration", "job_sonar", "job_docker", "job_deploy_staging", "job_deploy_qa", "job_deploy_production", "job_dispatch_release", "job_deploy_app", "job_undeploy_app", "job_lint_shell", "job_lint_markdown", "job_lint_yaml", "job_release_app", "job_helm_check", "job_helm_publish", "job_pr_check", "job_lint_ruby", "job_test_ruby", "job_docker", "job_sonar", "job_deploy_staging", "job_deploy_production", "job_upload_docs", "job_docker_build_and_publish")
+#@ load("listeners.lib.yml", "listener_code", "listener_code_monorepo", "listener_deploy", "listener_undeploy", "listener_chart")
+
+#@ def workflow_ts(app, app_end, extra_paths = [], integration = False, dist = True, app_specific_dockerfile = False):
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], dist))
+  _: #@ template.replace(job_test_unit([]))
+  #@ if integration:
+  _: #@ template.replace(job_test_integration([], None, None))
+  _: #@ template.replace(job_docker(["build", "test_unit", "test_integration"], "web", dist, app_specific_dockerfile))
+  _: #@ template.replace(job_sonar(["build", "test_unit", "test_integration"]))
+  _: #@ template.replace(job_deploy_production(["test_unit", "test_integration", "docker"], condition_master))
+  #@ else:
+  _: #@ template.replace(job_docker(["build", "test_unit"], "web", dist, app_specific_dockerfile))
+  _: #@ template.replace(job_sonar(["build", "test_unit"]))
+  _: #@ template.replace(job_deploy_production(["test_unit", "docker"], condition_master))
+  #@ end
+#@ end
+
+#@ def workflow_ts_cli(app, app_end, extra_paths = []):
+#@ payload = '{ "app": "${{ env.APP }}" }'
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_sonar(["build", "test_unit"]))
+  _: #@ template.replace(job_dispatch_release(["build", "test_unit"]))
+#@ end
+
+#@ def workflow_ts_core(app, app_end, extra_paths = [], app_specific_dockerfile = False, sign_certs = False):
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_test_integration([], None, None))
+  _: #@ template.replace(job_docker(["build", "test_unit", "test_integration"], "web", False, app_specific_dockerfile, sign_certs))
+  _: #@ template.replace(job_sonar(["build", "test_unit", "test_integration"]))
+  _: #@ template.replace(job_deploy_staging(["test_unit", "test_integration", "docker"]))
+  _: #@ template.replace(job_deploy_production(["test_unit", "test_integration", "docker"]))
+#@ end
+
+#@ def workflow_ts_lib(app, app_end, extra_paths = []):
+#@ payload = '{ "app": "${{ env.APP }}" }'
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_sonar(["build", "test_unit"]))
+  _: #@ template.replace(job_dispatch_release(["build", "test_unit"]))
+#@ end
+
+#@ def workflow_ts_rest(app, app_end, extra_paths = [], app_specific_dockerfile = False):
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_test_integration([], None, None))
+  _: #@ template.replace(job_docker(["build", "test_unit", "test_integration"], "web", False, app_specific_dockerfile))
+  _: #@ template.replace(job_sonar(["build", "test_unit", "test_integration"]))
+  _: #@ template.replace(job_deploy_staging(["test_unit", "docker"]))
+  _: #@ template.replace(job_deploy_production(["test_unit", "docker"]))
+#@ end
+
+#@ def workflow_ts_ui(app, app_end, extra_paths = [], app_specific_dockerfile = False):
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths + ["postcss.config.js"])
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_docker(["build", "test_unit"], "web", False, app_specific_dockerfile))
+  _: #@ template.replace(job_sonar(["build", "test_unit"]))
+  _: #@ template.replace(job_deploy_staging(["test_unit", "docker"]))
+  _: #@ template.replace(job_deploy_qa(["test_unit", "docker"]))
+  _: #@ template.replace(job_deploy_production(["test_unit", "docker"]))
+#@ end
+
+#@ def workflow_ts_utils(app, app_end, extra_paths = []):
+name: #@ "ts.{}".format(app)
+"on": #@ listener_code_monorepo(app, app_end, extra_paths)
+env: #@ env_code_monorepo(app, app_end)
+jobs:
+  _: #@ template.replace(job_build_ts([], False))
+  _: #@ template.replace(job_test_unit([]))
+  _: #@ template.replace(job_sonar(["build", "test_unit"]))
+#@ end
+
+#@ def workflow_rails(app, extra_paths = []):
+name: #@ app
+"on": #@ listener_code(app, extra_paths)
+env: #@ env_code(app)
+jobs:
+  _: #@ template.replace(job_lint_ruby([], ["libpq-dev", "libmagickwand-dev", "libv8-dev"]))
+  _: #@ template.replace(job_test_ruby([], ["libpq-dev", "libmagickwand-dev", "libv8-dev"]))
+  _: #@ template.replace(job_docker(["lint", "test"], "mobile", False))
+  _: #@ template.replace(job_sonar(["lint", "test"], "mobile"))
+  _: #@ template.replace(job_deploy_production(["test", "docker"]))
+#@ end
+
+#@ def workflow_deploy(needs = [], repo_type = "web"):
+#@ payload = '{ "app": "${{ github.event.deployment.payload.app }}" }'
+name: deploy
+"on": #@ listener_deploy()
+env: #@ env_deploy()
+jobs:
+  _: #@ template.replace(job_deploy_app(needs, repo_type))
+  _: #@ template.replace(job_dispatch_release(["deploy_app"], "deployment"))
+#@ end
+
+#@ def workflow_release(task_prefix, monorepo = False):
+name: release
+"on":
+  release:
+  repository_dispatch:
+    types:
+    - release
+jobs:
+  _: #@ template.replace(job_release_app([], "dispatch", task_prefix, False, monorepo))
+#@ end
+
+#@ def workflow_shell():
+name: shell
+"on":
+  push:
+    branches:
+    - 'master'
+    paths:
+    - '**.sh'
+  pull_request:
+    paths:
+    - '**.sh'
+  repository_dispatch:
+    types:
+    - shell
+jobs:
+  _: #@ template.replace(job_lint_shell())
+#@ end
+
+#@ def workflow_markdown():
+name: markdown
+"on":
+  push:
+    branches:
+      - "master"
+    paths:
+      - "**.md"
+      - ".github/workflows/markdown.yaml"
+  pull_request:
+    paths:
+      - "**.md"
+      - ".github/workflows/markdown.yaml"
+  repository_dispatch:
+    types:
+    - markdown
+jobs:
+  _: #@ template.replace(job_lint_markdown())
+#@ end
+
+#@ def workflow_yaml():
+name: yaml
+"on":
+  push:
+    branches:
+    - 'master'
+    paths:
+    - '**.yaml'
+    - '**.yml'
+  pull_request:
+    paths:
+    - '**.yaml'
+    - '**.yml'
+  repository_dispatch:
+    types:
+    - yaml
+jobs:
+  _: #@ template.replace(job_lint_yaml())
+#@ end
+
+#@ def workflow_chart(chart, extra_paths = []):
+name: #@ "chart.{}".format(chart)
+"on": #@ listener_chart(chart, extra_paths)
+env: #@ env_chart(chart)
+jobs:
+  _: #@ template.replace(job_helm_check())
+  _: #@ template.replace(job_helm_publish())
+#@ end
+
+#@ def workflow_pr(label_config = ''):
+name: pr
+"on":
+  push:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+  repository_dispatch:
+    types:
+    - pr
+jobs:
+  _: #@ template.replace(job_pr_check([], label_config))
+#@ end
+
+#@ def workflow_docs():
+name: docs
+"on":
+  push:
+    branches:
+      - "master"
+    paths:
+      - "**.md"
+      - "docs.yaml"
+  repository_dispatch:
+    types:
+    - docs
+jobs:
+  _: #@ template.replace(job_upload_docs([]))
+#@ end
+
+#@ def workflow_docker(app):
+name: #@ "docker.{}".format(app)
+"on":
+  push:
+    tags:
+      - "*"
+    paths:
+      - ".dockerignore"
+      - "Dockerfile"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Docker version to push'
+        required: true
+        default: 'latest'
+env:
+  APP: #@ app
+  DOCKER_HUB_PROJECT: minddocdev
+jobs:
+  _: #@ template.replace(job_docker_build_and_publish())
+#@ end

@@ -1,0 +1,78 @@
+#@ load("@ytt:template", "template")
+
+#@ def paths_ts_files(app, app_end, extra_paths):
+paths:
+  - #@ ".github/workflows/ts.{}.yaml".format(app)
+  - #@ "packages/{}/{}/**".format(app_end, app)
+  - #@ "packages/{}/*".format(app_end)
+  - #@ "packages/{}/tsconfig.json".format(app_end)
+  - #@ template.replace(extra_paths)
+  - "jest.config.js"
+  - "package.json"
+  - "tsconfig.json"
+  - "types/**/*.ts"
+  - "!**.md"
+  - "!**.sh"
+  - "!**/.gitignore"
+  - "!**/.gitmodules"
+#@ end
+
+#@ def paths_helm_files(chart, extra_paths):
+paths:
+  - #@ ".github/workflows/chart.{}.yaml".format(chart)
+  - #@ "helm/charts/{}/**".format(chart)
+  - #@ template.replace(extra_paths)
+  - "helm/charts/common/**"
+#@ end
+
+#@ def listener_code_monorepo(app, app_end, extra_paths):
+repository_dispatch:
+  types:
+  - #@ app
+push:
+  branches:
+  - "master"
+  _: #@ template.replace(paths_ts_files(app, app_end, extra_paths))
+  tags:
+  - #@ "{}@*".format(app)
+pull_request:
+  _: #@ template.replace(paths_ts_files(app, app_end, extra_paths))
+#@ end
+
+#@ def listener_code(app, paths):
+repository_dispatch:
+  types:
+  - #@ app
+push:
+  branches:
+  - "master"
+  paths:
+  - #@ template.replace(paths)
+  tags:
+  - "*"
+pull_request:
+  paths:
+  - #@ template.replace(paths)
+#@ end
+
+#@ def listener_deploy():
+deployment:
+#@ end
+
+#@ def listener_undeploy():
+deployment_status:
+#@ end
+
+#@ def listener_chart(chart, extra_paths):
+repository_dispatch:
+  types:
+  - #@ "chart.{}".format(chart)
+push:
+  branches:
+  - "master"
+  _: #@ template.replace(paths_helm_files(chart, extra_paths))
+  tags:
+  - "*"
+pull_request:
+  _: #@ template.replace(paths_helm_files(chart, extra_paths))
+#@ end

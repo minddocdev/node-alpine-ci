@@ -1,0 +1,28 @@
+#@ def env_code(app):
+  APP: #@ app
+  APP_END_PATH: "."
+  APP_PATH: "."
+  RUBY_VERSION: "2.6"
+#@ end
+
+#@ def env_code_monorepo(app, app_end):
+  APP: #@ app
+  #! TODO - Change once apps are stored in frontend/backend folders
+#@ if app.startswith(("bot-", "cli-", "core-", "lib-", "rest-", "ui-", "utils-", "ws-")):
+  APP_END_PATH: #@ "packages/{}".format(app_end)
+  APP_PATH: #@ "packages/{}/{}".format(app_end, app)
+#@ else:
+  APP_END_PATH: "packages"
+  APP_PATH: #@ "packages/{}".format(app)
+#@ end
+  NPM_GITHUB_TOKEN: ${{ github.token }}
+  NPM_FORTAWESOME_TOKEN: ${{ secrets.NPM_FORTAWESOME_TOKEN }}
+#@ end
+
+#@ def env_deploy():
+  REF: ${{ github.event.deployment.ref }}
+#@ end
+
+#@ def env_chart(chart):
+  CHART: #@ chart
+#@ end
