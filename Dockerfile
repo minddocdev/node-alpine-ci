@@ -7,7 +7,7 @@
 # Requires: minddocdev/node-alpine
 # authors:  development@minddoc.com
 # ------------------------------------------------------
-FROM minddocdev/node-alpine:latest
+FROM minddocdev/node-alpine:13.14.0
 LABEL maintainer="development@minddoc.com"
 
 # Install extra alpine packages
