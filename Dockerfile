@@ -7,11 +7,11 @@
 # Requires: minddocdev/node-alpine
 # authors:  development@minddoc.com
 # ------------------------------------------------------
-FROM minddocdev/node-alpine:14.16.0
+FROM minddocdev/node-alpine:16.13.0
 LABEL maintainer="development@minddoc.com"
 
 # Install extra alpine packages
-RUN apk --update --no-cache add git jq python python-dev rsync zip && rm -rf /var/cache/apk/*
+RUN apk --update --no-cache add git jq python2 python2-dev rsync zip && rm -rf /var/cache/apk/*
 
 # Install depedencies for CI
 RUN npm install --force --unsafe-perm -g yarn
